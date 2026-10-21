@@ -1,39 +1,41 @@
 require('dotenv').config();
 
-const { Filter } = require('bad-words');
-const filter = new Filter()
 const express = require('express');
 const session = require('express-session');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
-
+const bcrypt = require('bcryptjs');
+const { Filter } = require('bad-words');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+
+const db = require('./db');
 
 const app = express();
+const filter = new Filter();
 
-// Trust the X-Forwarded-For header set by hosts like Render, so the rate
-// limiter sees each visitor's real IP instead of the proxy's
-app.set('trust proxy', 1);
-app.use(helmet({ contentSecurityPolicy: false }));
+const REQUIRED_ENV = ['SESSION_SECRET', 'NASA_API_KEY', 'ADMIN_USERNAME', 'ADMIN_PASSWORD'];
+for (const key of REQUIRED_ENV) {
+    if (!process.env[key]) {
+        throw new Error(`Missing required environment variable: ${key}`);
+    }
+}
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const LOG_FILE = path.join(__dirname, 'server.log');
 
 let visitorCount = 0;
+const apodCache = new Map();
+const TODAY_MAX_AGE = 60 * 60 * 1000;
+const MAX_CACHE_SIZE = 100;
 
-// Trim the log file if it's gotten too big
-if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 128 * 128) {
-    const recentLines = fs.readFileSync(LOG_FILE, 'utf8').split('\n').slice(-10);
+if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 128 * 1024) {
+    const recentLines = fs.readFileSync(LOG_FILE, 'utf8').split('\n').slice(-200);
     fs.writeFileSync(LOG_FILE, recentLines.join('\n'));
 }
-const GUESTBOOK_FILE = path.join(__dirname, 'guestbook.json');
 
-function getGuestbookMessages() {
-    if (!fs.existsSync(GUESTBOOK_FILE)) return [];
-    return JSON.parse(fs.readFileSync(GUESTBOOK_FILE, 'utf8'));
-}
 function validateEntry(name, msg) {
     if (typeof name !== 'string' || typeof msg !== 'string') {
         return 'Name and message must be text.';
@@ -45,175 +47,352 @@ function validateEntry(name, msg) {
         return 'Message must be 1 to 280 characters.';
     }
     return null;
-};
+}
 
-// ==========================================
-// MIDDLEWARE SETUP
-// Each function below runs on every request, then calls next() to pass
-// it along - like a checkpoint before your routes.
-// ==========================================
+function validateCredentials(username, password) {
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return 'Username and password must be text.';
+    }
+    if (!/^[a-z0-9_]{3,20}$/.test(username.trim().toLowerCase())) {
+        return 'Username must be 3 to 20 letters, numbers or underscores.';
+    }
+    if (password.length < 8 || password.length > 72) {
+        return 'Password must be 8 to 72 characters.';
+    }
+    return null;
+}
 
-// Parse incoming POST form data (from <form> submissions) and JSON bodies
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use((req, res, next) => {
-    const logLine = `[${new Date().toISOString()}] ${req.method} ${req.path}\n`;
-    console.log(logLine.trim());
-    fs.appendFile(LOG_FILE, logLine, (err) => {
-        if (err) console.error('Log write failed:', err);
-    });
-    next();
-});
-// requests within the time window
-const limiter = rateLimit({
-    windowMs: 10 * 1000, // 10 second window
-    limit: 100,          // max requests per window, per IP
-    message: '<h1>429 Too Many Requests</h1><p>Please wait10 seconds.</p>'
-});
-app.use(limiter);
+function validateApodDate(date) {
+    if (date === undefined) return null;
 
-// Logs every request to the console and to server.log
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return 'Date must look like YYYY-MM-DD.';
+    }
 
+    const parsed = new Date(`${date}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+        return 'That is not a real date.';
+    }
 
-// Rate limiter - blocks an IP with a 429 response if it sends too many
-// requests within the time window
+    if (date < '1995-06-16') {
+        return 'The first picture is from 1995-06-16.';
+    }
 
+    const today = new Date().toISOString().slice(0, 10);
+    if (date > today) {
+        return 'That date is in the future.';
+    }
 
-// Tracks logged-in users via a signed cookie - the browser sends it back
-// automatically, no frontend code needed. Requires SESSION_SECRET in .env.
-app.use(session({
-    secret: process.env.SESSION_SECRET || 'fallback_secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 15 * 60 * 1000 } // session expires after 15 minutes
-}));
+    return null;
+}
 
-// Route guard - use this on any route that should require login.
-// Example: app.get('/dashboard', requireAuth, (req, res) => { ... });
 function requireAuth(req, res, next) {
-    if (!req.session.isAuthenticated) {
+    if (!req.session.userId) {
         return res.status(401).json({ error: 'Unauthorized. Please log in first.' });
     }
     next();
 }
 
-// ==========================================
-// ROUTES
-// Fill these in! Example routes are shown below.
-// ==========================================
+function requireLoginPage(req, res, next) {
+    if (!req.session.userId) return next();
+    return res.redirect('/guestbook');
+}
+
+function requireAdminPage(req, res, next) {
+    if (req.session.role !== 'admin') {
+        return res.redirect('/');
+    }
+    next();
+}
+
+function startSession(req, user, rememberMe) {
+    return new Promise((resolve, reject) => {
+        req.session.regenerate((err) => {
+            if (err) return reject(err);
+            req.session.userId = user.id;
+            req.session.username = user.username;
+            req.session.role = user.role;
+            req.session.csrfToken = crypto.randomUUID();
+            if (rememberMe) {
+                req.session.cookie.maxAge = 7 * 24 * 60 * 60 * 1000;
+            }
+            resolve();
+        });
+    });
+}
+
+function requireSameOrigin(req, res, next) {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+        return next();
+    }
+
+    function ensureCsrfToken(req, res, next) {
+        if (!req.session.csrfToken) {
+            req.session.csrfToken = crypto.randomUUID();
+        }
+        next();
+    }
+
+    function requireCsrfToken(req, res, next) {
+        if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+            return next();
+        }
+
+        const token = req.get('x-csrf-token');
+        if (!token || !req.session.csrfToken) {
+            return res.status(403).json({ error: 'Invalid CSRF token.' });
+        }
+
+        const tokenBuffer = Buffer.from(token);
+        const expectedBuffer = Buffer.from(req.session.csrfToken);
+
+        if (tokenBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(tokenBuffer, expectedBuffer)) {
+            return res.status(403).json({ error: 'Invalid CSRF token.' });
+        }
+
+        return next();
+    }
+
+    const origin = req.get('origin');
+    if (!origin) return next();
+
+    let originHost;
+    try {
+        originHost = new URL(origin).host;
+    } catch (err) {
+        return res.status(403).json({ error: 'Forbidden request origin.' });
+    }
+
+    if (originHost !== req.get('host')) {
+        return res.status(403).json({ error: 'Forbidden request origin.' });
+    }
+
+    return next();
+}
+
+const limiter = rateLimit({
+    windowMs: 10 * 1000,
+    limit: 100,
+    message: '<h1>429 Too Many Requests</h1><p>Please wait 10 seconds.</p>'
+});
+const authLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 10,
+    message: { error: 'Too many auth attempts. Please wait a minute.' }
+});
+const spaceLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 10,
+    message: { error: 'Too many space lookups. Please wait a minute.' }
+});
+
+app.set('trust proxy', 1);
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            'img-src': ["'self'", 'data:', 'https://assets.science.nasa.gov']
+        }
+    }
+}));
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+app.use(limiter);
+app.use(requireSameOrigin);
+app.use((req, res, next) => {
+    const logLine = `[${new Date().toISOString()}] ${req.method} ${req.path}\n`;
+    console.log(logLine.trim());
+    fs.appendFile(LOG_FILE, logLine, () => {});
+    next();
+});
+
+app.use(session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        maxAge: 15 * 60 * 1000,
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production'
+    }
+}));
+app.use(ensureCsrfToken);
+app.use(requireCsrfToken);
 
 app.get('/api/hello', (req, res) => {
     res.json({ message: 'Hello, world!' });
 });
 
-// Exposes the visitor count as JSON, e.g. for a frontend script to display
-app.get('/api/stats', (req, res) => {
-    res.json({ visitorCount });
+app.get('/api/csrf-token', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ csrfToken: req.session.csrfToken });
 });
 
-// Checks the password against .env; marks the session authenticated if correct
-app.post('/login', (req, res) => {
-    const { password, rememberMe } = req.body;
-    if (password === process.env.APP_PASSWORD) {
-        req.session.isAuthenticated = true;
-        if (rememberMe) {
-            // Set a cookie to remember the user
-            req.session.cookie.maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
-        }
-        return res.status(200).json({ success: true });
+app.get('/api/headers-demo', (req, res) => {
+    res.set('X-Student-Name', 'Sasori1454');
+    res.json({
+        browser: req.get('User-Agent'),
+        languages: req.get('Accept-Language'),
+        allRequestHeaders: req.headers
+    });
+});
+
+app.get('/api/stats', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const entries = await db.getAllEntries();
+    res.json({ visitorCount, guestbookCount: entries.length });
+});
+
+app.post('/register', authLimiter, async (req, res) => {
+    const { username, password } = req.body;
+    const error = validateCredentials(username, password);
+    if (error) {
+        return res.status(400).json({ error });
     }
-    return res.status(401).json({ success: false, error: 'Unauthorized. Incorrect password.' });
+
+    const cleanName = username.trim().toLowerCase();
+    if (await db.getUserByUsername(cleanName)) {
+        return res.status(409).json({ error: 'That username is already taken.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await db.addUser({ username: cleanName, passwordHash });
+
+    await startSession(req, user);
+    res.status(201).json({ username: user.username });
 });
 
-// Logout - destroys the session so req.session.isAuthenticated is gone
+app.post('/login', authLimiter, async (req, res) => {
+    const { username, password, rememberMe } = req.body;
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return res.status(400).json({ error: 'Username and password are required.' });
+    }
+
+    const user = await db.getUserByUsername(username.trim());
+    const passwordOk = user && await bcrypt.compare(password, user.passwordHash);
+
+    if (!passwordOk) {
+        return res.status(401).json({ error: 'Incorrect username or password.' });
+    }
+
+    await startSession(req, user, rememberMe);
+    res.json({ success: true, username: user.username });
+});
+
 app.post('/logout', (req, res) => {
     req.session.destroy(() => {
         res.json({ success: true });
     });
 });
-app.post('/api/guestbook', requireAuth, (req, res) => {
-    const { name, msg } = req.body;
-    if (!msg) {
-        const error = validateEntry(name, msg);
-        if (error) {
-            return res.status(400).json({ error: error });
-        }
-        return res.status(400).json({ error: 'Message is required' });
-    }
-    const messages = getGuestbookMessages();
-    const cleanedInput = msg.replace(/\s+/g, ' ').trim();
-    const compactedInput = cleanedInput.replace(/\s+/g, ' ').trim();
-    if (filter.isProfane(compactedInput)) {
-        return res.status(400).json({ error: 'Profanity is not allowed' });
-    }
-
-    const entry = {
-        id: crypto.randomUUID(),
-        name: name,
-        msg: cleanedInput,
-        createdAt: new Date().toISOString()
-    }
-    messages.push(entry);
-
-    fs.writeFileSync(GUESTBOOK_FILE, JSON.stringify(messages.slice(-50), null, 2));
-    res.json({ success: true });
-});
-
-// Example protected route - try visiting this without logging in first
-app.get('/dashboard', requireAuth, (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html'));
-});
-
-// Example: run code (logging, a counter, etc.) before serving a page from /public
-app.get('/projects', (req, res) => {
-    visitorCount++;
-    console.log(`Visit #${visitorCount}: someone viewed the projects page`);
-    res.sendFile(path.join(PUBLIC_DIR, 'projects.html'));
-});
-app.get('/about', (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, 'about.html'));
-});
-
-app.get('/guestbook', requireAuth, (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, 'guestbook.html'));
-});
 
 app.get('/api/whoami', (req, res) => {
-    res.json({ loggedIn: req.session.isAuthenticated });
+    if (!req.session.userId) {
+        return res.json({ loggedIn: false });
+    }
+    res.json({
+        loggedIn: true,
+        userId: req.session.userId,
+        username: req.session.username,
+        role: req.session.role
+    });
 });
-app.get('/', (req, res) => {
-    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+
+app.get('/api/guestbook', requireAuth, async (req, res) => {
+    const entries = await db.getAllEntries();
+    res.json(entries);
 });
-app.get('/api/guestbook', requireAuth, (req, res) => {
-    res.json(getGuestbookMessages());
+
+app.post('/api/guestbook', requireAuth, async (req, res) => {
+    const { name, msg } = req.body;
+    const error = validateEntry(name, msg);
+    if (error) {
+        return res.status(400).json({ error });
+    }
+
+    const compactedInput = msg.trim().replace(/\s+/g, ' ');
+    if (filter.isProfane(compactedInput)) {
+        return res.status(400).json({ error: 'Please keep your message friendly.' });
+    }
+
+    const entry = await db.addEntry({
+        name: name.trim(),
+        msg: compactedInput
+    });
+    res.status(201).json(entry);
 });
-app.get('/dashboard', requireAuth, (req, res) => {
-    res.sendFile(path.join(__dirname, 'dashboard.html'));
+
+app.get('/api/guestbook/:id', requireAuth, async (req, res) => {
+    const entry = await db.getEntryById(req.params.id);
+    if (!entry) {
+        return res.status(404).json({ error: 'Entry not found.' });
+    }
+    res.json(entry);
 });
-app.get('/api/space', async (req, res) => {
+
+app.put('/api/guestbook/:id', requireAuth, async (req, res) => {
+    const { name, msg } = req.body;
+    const error = validateEntry(name, msg);
+    if (error) {
+        return res.status(400).json({ error });
+    }
+
+    const compactedInput = msg.trim().replace(/\s+/g, ' ');
+    if (filter.isProfane(compactedInput)) {
+        return res.status(400).json({ error: 'Please keep your message friendly.' });
+    }
+
+    const updated = await db.updateEntry(req.params.id, {
+        name: name.trim(),
+        msg: compactedInput
+    });
+    if (!updated) {
+        return res.status(404).json({ error: 'Entry not found.' });
+    }
+    res.json(updated);
+});
+
+app.delete('/api/guestbook/:id', requireAuth, async (req, res) => {
+    const deleted = await db.deleteEntry(req.params.id);
+    if (!deleted) {
+        return res.status(404).json({ error: 'Entry not found.' });
+    }
+    res.status(204).end();
+});
+
+app.get('/api/space', spaceLimiter, async (req, res) => {
     const { date } = req.query;
 
-    // Validation goes here in Part 4
-
-    if (!process.env.NASA_API_KEY) {
-        throw new Error('NASA_API_KEY is missing from .env');
+    const dateError = validateApodDate(date);
+    if (dateError) {
+        return res.status(400).json({ error: dateError });
     }
 
-    // NASA has one address for the latest pictures, and another for one day.
-    // The one-day address uses the date as YYMMDD: 2025-07-04 becomes 250704
-    let address = 'https://science.nasa.gov/wp-json/wp/v2/apod-basic/';
-    if (date) {
-        const shortDate = date.slice(2).replaceAll('-', '');
-        address = address + shortDate;
+    const dateValue = typeof date === 'string' ? date : undefined;
+    const cacheKey = dateValue || 'today';
+    const cached = apodCache.get(cacheKey);
+    const isFresh = cacheKey !== 'today' || Date.now() - (cached?.savedAt ?? 0) < TODAY_MAX_AGE;
+
+    if (cached && isFresh) {
+        return res.json(cached.data);
     }
 
-    // Add the secret key on the server
-    const nasaUrl = new URL(address);
+    let shortDatePath = '';
+    if (dateValue) {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+        if (!match) {
+            return res.status(400).json({ error: 'Date must look like YYYY-MM-DD.' });
+        }
+        shortDatePath = `${match[1].slice(2)}${match[2]}${match[3]}`;
+    }
+
+    const nasaUrl = shortDatePath
+        ? new URL(`https://science.nasa.gov/wp-json/wp/v2/apod-basic/${shortDatePath}`)
+        : new URL('https://science.nasa.gov/wp-json/wp/v2/apod-basic/');
     nasaUrl.searchParams.set('api_key', process.env.NASA_API_KEY);
 
     let nasaResponse;
     try {
-        // Give up if NASA takes longer than 8 seconds
         nasaResponse = await fetch(nasaUrl, { signal: AbortSignal.timeout(8000) });
     } catch (err) {
         return res.status(502).json({ error: 'Could not reach NASA. Try again later.' });
@@ -228,53 +407,94 @@ app.get('/api/space', async (req, res) => {
     }
 
     const data = await nasaResponse.json();
-
-    // With a date, NASA sends one picture. Without one, it sends a list,
-    // and the first item is the newest.
     const picture = Array.isArray(data) ? data[0] : data;
 
-    // Send back only what our page needs, with names we chose
-    res.json({
+    const result = {
         title: picture.title,
         date: picture.date,
         imageUrl: picture.hdurl,
         description: picture.alt,
         nasaPage: picture.permalink
-    });
-});
-// app.post('/your-route-here', (req, res) => {
-//
-// });
+    };
 
-// ==========================================
-// STATIC FILES
-// Serves everything in /public (put this AFTER your routes)
-// `extensions: ['html']` lets /projects find projects.html without the extension
-// ==========================================
+    apodCache.set(cacheKey, { data: result, savedAt: Date.now() });
+    if (apodCache.size > MAX_CACHE_SIZE) {
+        const oldestKey = apodCache.keys().next().value;
+        apodCache.delete(oldestKey);
+    }
+
+    res.json(result);
+});
+
+app.get('/guestbook', requireAuth, (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'guestbook.html'));
+});
+
+app.get('/register', requireLoginPage, (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'register.html'));
+});
+
+app.get('/dashboard', requireAdminPage, (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'dashboard.html'));
+});
+
+app.get('/projects', (req, res) => {
+    visitorCount += 1;
+    res.sendFile(path.join(PUBLIC_DIR, 'projects.html'));
+});
+
+app.get('/about', (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'about.html'));
+});
+
+app.get('/space', (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'space.html'));
+});
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+
 app.use((req, res) => {
     if (req.path.startsWith('/api/')) {
         return res.status(404).json({ error: 'Not found' });
     }
-    res.status(404).sendFile(path.join(PUBLIC_DIR, '404.html'));
+    return res.status(404).sendFile(path.join(PUBLIC_DIR, '404.html'));
 });
-app.use((err, req, res, next) => {
-    // Full details go to YOU, in the console and the log file
-    const time = new Date().toISOString();
-    console.error(`[${time}] ERROR ${req.method} ${req.path}`, err);
-    fs.appendFile(LOG_FILE, `[${time}] ERROR ${req.method} ${req.path}: ${err.message}\n`, () => { });
 
-    // If a response already started sending, let Express finish up
+app.use((err, req, res, next) => {
+    const time = new Date().toISOString();
+    const errorMeta = {
+        time,
+        method: req.method,
+        path: req.path,
+        message: err.message
+    };
+    console.error('ERROR', errorMeta, err);
+    fs.appendFile(LOG_FILE, `${JSON.stringify(errorMeta)}\n`, () => {});
+
     if (res.headersSent) return next(err);
 
-    // Errors with a status under 500 are the user's fault and safe to explain.
-    // Anything else is our fault, so hide the details.
     const status = err.status || 500;
     const message = status < 500 ? err.message : 'Something went wrong on our end.';
 
     if (req.path.startsWith('/api/')) {
         return res.status(status).json({ error: message });
     }
-    res.status(status).send('<h1>Something went wrong</h1><p>Please try again later.</p><a href="/">Back to home</a>');
+    return res.status(status).send('<h1>Something went wrong</h1><p>Please try again later.</p><a href="/">Back to home</a>');
 });
-app.listen(PORT, () => console.log(`Server live on http://localhost:${PORT}`));
+
+async function ensureAdmin() {
+    const existing = await db.getUserByUsername(process.env.ADMIN_USERNAME);
+    if (existing) return;
+
+    const passwordHash = await bcrypt.hash(process.env.ADMIN_PASSWORD, 12);
+    await db.addUser({ username: process.env.ADMIN_USERNAME, passwordHash, role: 'admin' });
+    console.log('Created admin account');
+}
+
+ensureAdmin().then(() => {
+    app.listen(PORT, () => console.log(`Server live on http://localhost:${PORT}`));
+});

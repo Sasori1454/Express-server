@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/guestbook">Guestbook</a>
+        <a href="/space">Space</a>
+        <a href="/projects">Projects</a>
+        <a href="/about">About</a>
+    </nav>
+</header>
+<main>
+    <section id="status"></section>
+
+    <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required>
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+        <label>
+            <input id="rememberMe" name="rememberMe" type="checkbox">
+            Remember me for 7 days
+        </label>
+
+        <button type="submit">Log in</button>
+    </form>
+
+    <button id="logout" type="button" hidden>Log out</button>
+    <p id="auth-error" role="alert"></p>
+
+    <p>New here? <a href="/register">Create an account</a></p>
+</main>
+<script src="/js/index.js"></script>
+</body>
+</html>
