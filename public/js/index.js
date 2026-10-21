@@ -3,6 +3,12 @@ const logoutButton = document.querySelector('#logout');
 const status = document.querySelector('#status');
 const authError = document.querySelector('#auth-error');
 
+async function getCsrfToken() {
+    const response = await fetch('/api/csrf-token');
+    const data = await response.json();
+    return data.csrfToken;
+}
+
 async function checkAuthState() {
     const response = await fetch('/api/whoami');
     const data = await response.json();
@@ -29,9 +35,13 @@ loginForm.addEventListener('submit', async (e) => {
     const rememberMe = document.querySelector('#rememberMe').checked;
 
     try {
+        const csrfToken = await getCsrfToken();
         const response = await fetch('/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-csrf-token': csrfToken
+            },
             body: JSON.stringify({ username, password, rememberMe })
         });
         const data = await response.json().catch(() => ({}));
@@ -48,7 +58,11 @@ loginForm.addEventListener('submit', async (e) => {
 });
 
 logoutButton.addEventListener('click', async () => {
-    await fetch('/logout', { method: 'POST' });
+    const csrfToken = await getCsrfToken();
+    await fetch('/logout', {
+        method: 'POST',
+        headers: { 'x-csrf-token': csrfToken }
+    });
     window.location.reload();
 });
 

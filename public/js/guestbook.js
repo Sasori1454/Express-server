@@ -1,12 +1,20 @@
 const listError = document.querySelector('#list-error');
 const formError = document.querySelector('#form-error');
 
+async function getCsrfToken() {
+    const response = await fetch('/api/csrf-token');
+    const data = await response.json();
+    return data.csrfToken;
+}
+
 async function deleteEntry(id) {
     if (!confirm('Delete this message?')) return;
 
     try {
+        const csrfToken = await getCsrfToken();
         const response = await fetch(`/api/guestbook/${encodeURIComponent(id)}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: { 'x-csrf-token': csrfToken }
         });
 
         if (!response.ok) {
@@ -23,9 +31,13 @@ async function deleteEntry(id) {
 
 async function saveEdit(entry, newMsg) {
     try {
+        const csrfToken = await getCsrfToken();
         const response = await fetch(`/api/guestbook/${encodeURIComponent(entry.id)}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-csrf-token': csrfToken
+            },
             body: JSON.stringify({ name: entry.name, msg: newMsg })
         });
 
@@ -120,9 +132,13 @@ document.querySelector('#guestbook-form').addEventListener('submit', async (e) =
     formError.textContent = '';
 
     try {
+        const csrfToken = await getCsrfToken();
         const response = await fetch('/api/guestbook', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-csrf-token': csrfToken
+            },
             body: JSON.stringify({
                 name: document.querySelector('#name').value,
                 msg: document.querySelector('#msg').value

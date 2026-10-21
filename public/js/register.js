@@ -1,5 +1,11 @@
 const message = document.querySelector('#register-message');
 
+async function getCsrfToken() {
+    const response = await fetch('/api/csrf-token');
+    const data = await response.json();
+    return data.csrfToken;
+}
+
 document.querySelector('#register-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     message.textContent = '';
@@ -14,9 +20,13 @@ document.querySelector('#register-form').addEventListener('submit', async (e) =>
     }
 
     try {
+        const csrfToken = await getCsrfToken();
         const response = await fetch('/register', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-csrf-token': csrfToken
+            },
             body: JSON.stringify({ username, password })
         });
         const data = await response.json().catch(() => ({}));

@@ -8,6 +8,7 @@ const bcrypt = require('bcryptjs');
 const { Filter } = require('bad-words');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const db = require('./db');
 
@@ -111,6 +112,7 @@ function startSession(req, user, rememberMe) {
             req.session.userId = user.id;
             req.session.username = user.username;
             req.session.role = user.role;
+            req.session.csrfToken = crypto.randomUUID();
             if (rememberMe) {
                 req.session.cookie.maxAge = 7 * 24 * 60 * 60 * 1000;
             }
@@ -121,6 +123,33 @@ function startSession(req, user, rememberMe) {
 
 function requireSameOrigin(req, res, next) {
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+        return next();
+    }
+
+    function ensureCsrfToken(req, res, next) {
+        if (!req.session.csrfToken) {
+            req.session.csrfToken = crypto.randomUUID();
+        }
+        next();
+    }
+
+    function requireCsrfToken(req, res, next) {
+        if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+            return next();
+        }
+
+        const token = req.get('x-csrf-token');
+        if (!token || !req.session.csrfToken) {
+            return res.status(403).json({ error: 'Invalid CSRF token.' });
+        }
+
+        const tokenBuffer = Buffer.from(token);
+        const expectedBuffer = Buffer.from(req.session.csrfToken);
+
+        if (tokenBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(tokenBuffer, expectedBuffer)) {
+            return res.status(403).json({ error: 'Invalid CSRF token.' });
+        }
+
         return next();
     }
 
@@ -188,9 +217,16 @@ app.use(session({
         secure: process.env.NODE_ENV === 'production'
     }
 }));
+app.use(ensureCsrfToken);
+app.use(requireCsrfToken);
 
 app.get('/api/hello', (req, res) => {
     res.json({ message: 'Hello, world!' });
+});
+
+app.get('/api/csrf-token', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json({ csrfToken: req.session.csrfToken });
 });
 
 app.get('/api/headers-demo', (req, res) => {
@@ -341,8 +377,17 @@ app.get('/api/space', spaceLimiter, async (req, res) => {
         return res.json(cached.data);
     }
 
-    const nasaUrl = dateValue
-        ? new URL(`https://science.nasa.gov/wp-json/wp/v2/apod-basic/${dateValue.slice(2).replaceAll('-', '')}`)
+    let shortDatePath = '';
+    if (dateValue) {
+        const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+        if (!match) {
+            return res.status(400).json({ error: 'Date must look like YYYY-MM-DD.' });
+        }
+        shortDatePath = `${match[1].slice(2)}${match[2]}${match[3]}`;
+    }
+
+    const nasaUrl = shortDatePath
+        ? new URL(`https://science.nasa.gov/wp-json/wp/v2/apod-basic/${shortDatePath}`)
         : new URL('https://science.nasa.gov/wp-json/wp/v2/apod-basic/');
     nasaUrl.searchParams.set('api_key', process.env.NASA_API_KEY);
 
