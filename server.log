@@ -1,0 +1,78 @@
+[2026-10-06T17:19:27.634Z] GET /uunun
+[2026-10-06T17:20:16.592Z] GET /uunun
+[2026-10-06T17:20:35.357Z] GET /
+[2026-10-06T17:20:35.366Z] GET /style.css
+[2026-10-06T17:20:35.371Z] GET /api/whoami
+[2026-10-06T17:20:35.379Z] GET /.well-known/appspecific/com.chrome.devtools.json
+[2026-10-06T17:20:44.106Z] GET /boo
+[2026-10-06T17:21:35.895Z] GET /boo
+[2026-10-06T17:21:36.783Z] GET /boo
+[2026-10-07T16:19:23.443Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:19:23.498Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T16:47:43.582Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:47:43.602Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T16:47:45.874Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:47:45.889Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T16:47:46.892Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:47:46.906Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T16:48:58.034Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:48:58.051Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T16:48:59.172Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:48:59.186Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T16:49:00.138Z] ERROR GET /: secret option required for sessions
+[2026-10-07T16:49:00.152Z] ERROR GET /favicon.ico: secret option required for sessions
+[2026-10-07T17:18:24.686Z] GET /
+[2026-10-07T17:18:24.759Z] GET /style.css
+[2026-10-07T17:18:24.767Z] GET /api/whoami
+[2026-10-07T17:18:24.788Z] GET /favicon.ico
+[2026-10-08T16:08:11.152Z] GET /
+[2026-10-08T16:08:11.245Z] GET /style.css
+[2026-10-08T16:08:11.258Z] GET /api/whoami
+[2026-10-08T16:08:11.274Z] GET /favicon.ico
+[2026-10-08T16:08:19.943Z] GET /projects.html
+[2026-10-08T16:08:19.957Z] GET /style.css
+[2026-10-08T16:08:20.911Z] GET /dashboard.html
+[2026-10-08T16:08:20.926Z] GET /dashboard.css
+[2026-10-08T16:08:23.113Z] POST /logout
+[2026-10-08T16:08:23.129Z] GET /
+[2026-10-08T16:08:23.139Z] GET /style.css
+[2026-10-08T16:08:23.141Z] GET /api/whoami
+[2026-10-08T16:08:24.245Z] GET /index.html
+[2026-10-08T16:08:24.252Z] GET /style.css
+[2026-10-08T16:08:24.256Z] GET /api/whoami
+[2026-10-08T16:08:25.470Z] GET /guestbook.html
+[2026-10-08T16:08:25.482Z] GET /style.css
+[2026-10-08T16:08:25.483Z] GET /js/guestbook.js
+[2026-10-08T16:08:25.491Z] GET /api/guestbook
+[2026-10-08T16:08:26.597Z] GET /index.html
+[2026-10-08T16:08:26.604Z] GET /style.css
+[2026-10-08T16:08:26.609Z] GET /api/whoami
+[2026-10-08T16:08:31.227Z] POST /login
+[2026-10-08T16:08:31.233Z] GET /api/whoami
+[2026-10-08T16:08:31.244Z] GET /
+[2026-10-08T16:08:31.254Z] GET /style.css
+[2026-10-08T16:08:31.257Z] GET /api/whoami
+[2026-10-08T16:08:33.711Z] GET /dashboard.html
+[2026-10-08T16:08:33.720Z] GET /dashboard.css
+[2026-10-08T16:08:34.883Z] POST /logout
+[2026-10-08T16:08:34.892Z] GET /
+[2026-10-08T16:08:34.899Z] GET /style.css
+[2026-10-08T16:08:34.902Z] GET /api/whoami
+[2026-10-08T16:08:38.920Z] POST /login
+[2026-10-08T16:08:38.923Z] GET /api/whoami
+[2026-10-08T16:08:38.929Z] GET /
+[2026-10-08T16:08:38.936Z] GET /style.css
+[2026-10-08T16:08:38.939Z] GET /api/whoami
+[2026-10-08T16:08:41.733Z] GET /index.html
+[2026-10-08T16:08:41.744Z] GET /style.css
+[2026-10-08T16:08:41.747Z] GET /api/whoami
+[2026-10-08T16:08:44.951Z] GET /projects.html
+[2026-10-08T16:08:44.960Z] GET /style.css
+[2026-10-08T16:08:46.575Z] GET /guestbook.html
+[2026-10-08T16:08:46.582Z] GET /style.css
+[2026-10-08T16:08:46.584Z] GET /js/guestbook.js
+[2026-10-08T16:08:46.588Z] GET /api/guestbook
+[2026-10-08T16:21:58.292Z] GET /guestbook.html
+[2026-10-08T16:21:58.298Z] GET /style.css
+[2026-10-08T16:21:58.300Z] GET /js/guestbook.js
+[2026-10-08T16:21:58.307Z] GET /api/guestbook
