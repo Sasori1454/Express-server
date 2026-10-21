@@ -126,33 +126,6 @@ function requireSameOrigin(req, res, next) {
         return next();
     }
 
-    function ensureCsrfToken(req, res, next) {
-        if (!req.session.csrfToken) {
-            req.session.csrfToken = crypto.randomUUID();
-        }
-        next();
-    }
-
-    function requireCsrfToken(req, res, next) {
-        if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
-            return next();
-        }
-
-        const token = req.get('x-csrf-token');
-        if (!token || !req.session.csrfToken) {
-            return res.status(403).json({ error: 'Invalid CSRF token.' });
-        }
-
-        const tokenBuffer = Buffer.from(token);
-        const expectedBuffer = Buffer.from(req.session.csrfToken);
-
-        if (tokenBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(tokenBuffer, expectedBuffer)) {
-            return res.status(403).json({ error: 'Invalid CSRF token.' });
-        }
-
-        return next();
-    }
-
     const origin = req.get('origin');
     if (!origin) return next();
 
@@ -165,6 +138,33 @@ function requireSameOrigin(req, res, next) {
 
     if (originHost !== req.get('host')) {
         return res.status(403).json({ error: 'Forbidden request origin.' });
+    }
+
+    return next();
+}
+
+function ensureCsrfToken(req, res, next) {
+    if (!req.session.csrfToken) {
+        req.session.csrfToken = crypto.randomUUID();
+    }
+    next();
+}
+
+function requireCsrfToken(req, res, next) {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+        return next();
+    }
+
+    const token = req.get('x-csrf-token');
+    if (!token || !req.session.csrfToken) {
+        return res.status(403).json({ error: 'Invalid CSRF token.' });
+    }
+
+    const tokenBuffer = Buffer.from(token);
+    const expectedBuffer = Buffer.from(req.session.csrfToken);
+
+    if (tokenBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(tokenBuffer, expectedBuffer)) {
+        return res.status(403).json({ error: 'Invalid CSRF token.' });
     }
 
     return next();
