@@ -119,23 +119,27 @@ function startSession(req, user, rememberMe) {
     });
 }
 
-app.set('trust proxy', 1);
-app.use(helmet({
-    contentSecurityPolicy: {
-        directives: {
-            'img-src': ["'self'", 'data:', 'https://assets.science.nasa.gov']
-        }
+function requireSameOrigin(req, res, next) {
+    if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+        return next();
     }
-}));
 
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
-app.use((req, res, next) => {
-    const logLine = `[${new Date().toISOString()}] ${req.method} ${req.path}\n`;
-    console.log(logLine.trim());
-    fs.appendFile(LOG_FILE, logLine, () => {});
-    next();
-});
+    const origin = req.get('origin');
+    if (!origin) return next();
+
+    let originHost;
+    try {
+        originHost = new URL(origin).host;
+    } catch (err) {
+        return res.status(403).json({ error: 'Forbidden request origin.' });
+    }
+
+    if (originHost !== req.get('host')) {
+        return res.status(403).json({ error: 'Forbidden request origin.' });
+    }
+
+    return next();
+}
 
 const limiter = rateLimit({
     windowMs: 10 * 1000,
@@ -153,13 +157,36 @@ const spaceLimiter = rateLimit({
     message: { error: 'Too many space lookups. Please wait a minute.' }
 });
 
+app.set('trust proxy', 1);
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            'img-src': ["'self'", 'data:', 'https://assets.science.nasa.gov']
+        }
+    }
+}));
+
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(limiter);
+app.use(requireSameOrigin);
+app.use((req, res, next) => {
+    const logLine = `[${new Date().toISOString()}] ${req.method} ${req.path}\n`;
+    console.log(logLine.trim());
+    fs.appendFile(LOG_FILE, logLine, () => {});
+    next();
+});
 
 app.use(session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 15 * 60 * 1000 }
+    cookie: {
+        maxAge: 15 * 60 * 1000,
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production'
+    }
 }));
 
 app.get('/api/hello', (req, res) => {
@@ -305,7 +332,8 @@ app.get('/api/space', spaceLimiter, async (req, res) => {
         return res.status(400).json({ error: dateError });
     }
 
-    const cacheKey = date || 'today';
+    const dateValue = typeof date === 'string' ? date : undefined;
+    const cacheKey = dateValue || 'today';
     const cached = apodCache.get(cacheKey);
     const isFresh = cacheKey !== 'today' || Date.now() - (cached?.savedAt ?? 0) < TODAY_MAX_AGE;
 
@@ -313,13 +341,9 @@ app.get('/api/space', spaceLimiter, async (req, res) => {
         return res.json(cached.data);
     }
 
-    let address = 'https://science.nasa.gov/wp-json/wp/v2/apod-basic/';
-    if (date) {
-        const shortDate = date.slice(2).replaceAll('-', '');
-        address += shortDate;
-    }
-
-    const nasaUrl = new URL(address);
+    const nasaUrl = dateValue
+        ? new URL(`https://science.nasa.gov/wp-json/wp/v2/apod-basic/${dateValue.slice(2).replaceAll('-', '')}`)
+        : new URL('https://science.nasa.gov/wp-json/wp/v2/apod-basic/');
     nasaUrl.searchParams.set('api_key', process.env.NASA_API_KEY);
 
     let nasaResponse;
@@ -397,8 +421,14 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
     const time = new Date().toISOString();
-    console.error(`[${time}] ERROR ${req.method} ${req.path}`, err);
-    fs.appendFile(LOG_FILE, `[${time}] ERROR ${req.method} ${req.path}: ${err.message}\n`, () => {});
+    const errorMeta = {
+        time,
+        method: req.method,
+        path: req.path,
+        message: err.message
+    };
+    console.error('ERROR', errorMeta, err);
+    fs.appendFile(LOG_FILE, `${JSON.stringify(errorMeta)}\n`, () => {});
 
     if (res.headersSent) return next(err);
 
