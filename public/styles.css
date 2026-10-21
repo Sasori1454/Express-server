@@ -1,0 +1,49 @@
+body {
+    font-family: system-ui, sans-serif;
+    line-height: 1.4;
+    margin: 0;
+    padding: 0;
+}
+
+header, main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+nav a {
+    margin-right: 0.75rem;
+}
+
+label {
+    display: block;
+    margin-top: 0.75rem;
+}
+
+input, textarea, button {
+    font: inherit;
+}
+
+textarea {
+    width: min(100%, 600px);
+    min-height: 5rem;
+}
+
+img {
+    max-width: 100%;
+}
+
+#form-error,
+#list-error,
+#register-message,
+#status {
+    color: #b00020;
+}
+
+ul {
+    padding-left: 1.2rem;
+}
+
+li {
+    margin-bottom: 1rem;
+}
