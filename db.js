@@ -29,12 +29,13 @@ async function getEntryById(id) {
     return entries.find((entry) => entry.id === id) || null;
 }
 
-async function addEntry({ name, msg }) {
+async function addEntry({ name, msg, authorId }) {
     const entries = await readAll();
     const entry = {
         id: crypto.randomUUID(),
         name,
         msg,
+        authorId,
         createdAt: new Date().toISOString()
     };
     entries.push(entry);

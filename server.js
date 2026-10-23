@@ -93,6 +93,10 @@ function requireAuth(req, res, next) {
     next();
 }
 
+function canModify(req, entry) {
+    return entry.authorId === req.session.userId || req.session.role === 'admin';
+}
+
 function requireLoginPage(req, res, next) {
     if (!req.session.userId) return next();
     return res.redirect('/guestbook');
@@ -304,7 +308,8 @@ app.get('/api/guestbook', requireAuth, async (req, res) => {
 });
 
 app.post('/api/guestbook', requireAuth, async (req, res) => {
-    const { name, msg } = req.body;
+    const { msg } = req.body;
+    const name = req.session.username;
     const error = validateEntry(name, msg);
     if (error) {
         return res.status(400).json({ error });
@@ -316,8 +321,9 @@ app.post('/api/guestbook', requireAuth, async (req, res) => {
     }
 
     const entry = await db.addEntry({
-        name: name.trim(),
-        msg: compactedInput
+        name,
+        msg: compactedInput,
+        authorId: req.session.userId
     });
     res.status(201).json(entry);
 });
@@ -331,8 +337,16 @@ app.get('/api/guestbook/:id', requireAuth, async (req, res) => {
 });
 
 app.put('/api/guestbook/:id', requireAuth, async (req, res) => {
-    const { name, msg } = req.body;
-    const error = validateEntry(name, msg);
+    const { msg } = req.body;
+    const entry = await db.getEntryById(req.params.id);
+    if (!entry) {
+        return res.status(404).json({ error: 'Entry not found.' });
+    }
+    if (!canModify(req, entry)) {
+        return res.status(403).json({ error: 'You can only edit your own messages.' });
+    }
+
+    const error = validateEntry(entry.name, msg);
     if (error) {
         return res.status(400).json({ error });
     }
@@ -343,20 +357,22 @@ app.put('/api/guestbook/:id', requireAuth, async (req, res) => {
     }
 
     const updated = await db.updateEntry(req.params.id, {
-        name: name.trim(),
+        name: entry.name,
         msg: compactedInput
     });
-    if (!updated) {
-        return res.status(404).json({ error: 'Entry not found.' });
-    }
     res.json(updated);
 });
 
 app.delete('/api/guestbook/:id', requireAuth, async (req, res) => {
-    const deleted = await db.deleteEntry(req.params.id);
-    if (!deleted) {
+    const entry = await db.getEntryById(req.params.id);
+    if (!entry) {
         return res.status(404).json({ error: 'Entry not found.' });
     }
+    if (!canModify(req, entry)) {
+        return res.status(403).json({ error: 'You can only delete your own messages.' });
+    }
+
+    await db.deleteEntry(entry.id);
     res.status(204).end();
 });
 

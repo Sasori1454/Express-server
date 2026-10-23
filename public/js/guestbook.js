@@ -1,5 +1,6 @@
 const listError = document.querySelector('#list-error');
 const formError = document.querySelector('#form-error');
+let currentUser = null;
 
 async function getCsrfToken() {
     const response = await fetch('/api/csrf-token');
@@ -38,7 +39,7 @@ async function saveEdit(entry, newMsg) {
                 'Content-Type': 'application/json',
                 'x-csrf-token': csrfToken
             },
-            body: JSON.stringify({ name: entry.name, msg: newMsg })
+            body: JSON.stringify({ msg: newMsg })
         });
 
         if (!response.ok) {
@@ -86,6 +87,14 @@ async function loadMessages() {
             return;
         }
 
+        if (!currentUser) {
+            const whoamiResponse = await fetch('/api/whoami');
+            if (!whoamiResponse.ok) {
+                throw new Error('Could not determine the current user.');
+            }
+            currentUser = await whoamiResponse.json();
+        }
+
         const list = document.querySelector('#guestbook-list');
         list.textContent = '';
 
@@ -109,17 +118,20 @@ async function loadMessages() {
                 li.append(edited);
             }
 
-            const editButton = document.createElement('button');
-            editButton.type = 'button';
-            editButton.textContent = 'Edit';
-            editButton.addEventListener('click', () => startEdit(li, entry));
+            const canEdit = entry.authorId === currentUser.userId || currentUser.role === 'admin';
+            if (canEdit) {
+                const editButton = document.createElement('button');
+                editButton.type = 'button';
+                editButton.textContent = 'Edit';
+                editButton.addEventListener('click', () => startEdit(li, entry));
 
-            const deleteButton = document.createElement('button');
-            deleteButton.type = 'button';
-            deleteButton.textContent = 'Delete';
-            deleteButton.addEventListener('click', () => deleteEntry(entry.id));
+                const deleteButton = document.createElement('button');
+                deleteButton.type = 'button';
+                deleteButton.textContent = 'Delete';
+                deleteButton.addEventListener('click', () => deleteEntry(entry.id));
 
-            li.append(' ', editButton, ' ', deleteButton);
+                li.append(' ', editButton, ' ', deleteButton);
+            }
             list.append(li);
         });
     } catch (err) {
@@ -139,10 +151,7 @@ document.querySelector('#guestbook-form').addEventListener('submit', async (e) =
                 'Content-Type': 'application/json',
                 'x-csrf-token': csrfToken
             },
-            body: JSON.stringify({
-                name: document.querySelector('#name').value,
-                msg: document.querySelector('#msg').value
-            })
+            body: JSON.stringify({ msg: document.querySelector('#msg').value })
         });
 
         if (!response.ok) {
